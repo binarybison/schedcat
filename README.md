@@ -69,6 +69,35 @@ Schedcat is a Python library with a C++ core. The best way to explore the librar
 	>>> ts[2].tardiness()
 	2
 
+    # What if two tasks both access a shared resource? 
+    
+    # load resource model
+    >>> import schedcat.model.resources as resources
+
+    # load blocking bounds
+    >>> import schedcat.locking.bounds as bounds
+
+    # initialize the resource model
+    >>> resources.initialize_resource_model(ts)
+
+    # task 0 and task 1 share resource 0 for 1 time unit each
+    >>> ts[0].resmodel[0].add_request(1)
+    >>> ts[1].resmodel[0].add_request(1)
+
+    # put all tasks in the same partition (global scheduling)
+    >>> for t in ts: t.partition = 0
+
+    # assign the priorities w.r.t. locking
+    >>> bounds.assign_edf_locking_prios(ts)
+
+    # inflate execution costs by blocking terms
+    >>> bounds.apply_global_omlp_bounds(ts, 3)
+
+    # test schedulability
+    >>> edf.is_schedulable(3, ts)
+    True
+
+
 ## Next Steps
 
 Schedcat provides reusable components for schedulability experiments, but does not itself provide a specific schedulability experiment setup. That is, how task sets are generated and tested is left to the user since there is no single right way to do it.
