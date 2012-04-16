@@ -35,6 +35,10 @@ After compilation,  execute the unit test suite with `make test` or, equivalentl
 
 Schedcat is a Python library with a C++ core. The best way to explore the library is to play with it in the Python shell and to read the source code.
 
+### Schedulability Tests
+
+The key purposes of schedcat is to collect and provide schedulability tests. In the following example, a task set consisting of three tasks is tested for  schedulability under global EDF scheduling on two and three cores.
+
 	$ python
 	
 	# load task model
@@ -69,7 +73,9 @@ Schedcat is a Python library with a C++ core. The best way to explore the librar
 	>>> ts[2].tardiness()
 	2
 
-    # What if two tasks both access a shared resource? 
+### Locking Protocols
+
+What if two tasks both access a shared resource? Schedcat also contains blocking term bounds for various locking protocols. This can be integrated into schedulability tests as follows. In this example, the global *O(m)* locking protocol (OMLP) is assumed.
     
     # load resource model
     >>> import schedcat.model.resources as resources
@@ -148,7 +154,7 @@ At this point, the library is largely undocumented. However, the library consist
 
 The unit test suite could use a lot more tests.
 
-There is currently no `setup.py`, and hence also no support `virtualenv`.
+There is currently no `setup.py`, and hence also no support for `virtualenv`.
 
 Python 3 is not supported at the moment.
 
