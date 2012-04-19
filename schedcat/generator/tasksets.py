@@ -9,13 +9,6 @@ from functools import partial
 
 import schedcat.generator.tasks as gen
 
-def decode_params(name):
-    # uni-UMIN-UMAX-PMIN-PMAX    
-    # bimo-
-    # exp-UMIN-UMAX-MEAN-PMIN-PMAX
-    
-    pass
-
 NAMED_PERIODS = {
 # Named period distributions used in several UNC papers, in milliseconds.
     'uni-short'     : gen.uniform_int( 3,  33),
