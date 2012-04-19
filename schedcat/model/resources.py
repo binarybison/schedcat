@@ -34,11 +34,12 @@ class Lock(object):
             else:
                 t.blocked = res.get_blocking_term(i)
 
-            # track arrival blocking separately, and on a per-lock basis.
             if hasattr(t, "arrival_blocking"):
-                t.arrival_blocking.append(res.get_arrival_blocking(i))
+                t.arrival_blocking += res.get_arrival_blocking(i)
             else:
-                t.arrival_blocking = [res.get_arrival_blocking(i)]
+                t.arrival_blocking = res.get_arrival_blocking(i)
+
+            t.cost += res.get_blocking_term(i)
 
     apply_spin_based = apply_suspension_oblivious
 
@@ -49,8 +50,9 @@ class Lock(object):
                          t.period if use_task_period else t.response_time,
                          t.partition,
                          t.locking_prio)
-            for resource, req in t.resmodel[self].iteritems():
-                rsi.add_request(req.res_id, req.max_requests, req.max_length)
+            for id, resource in enumerate(t.resmodel[self]):
+                req = t.resmodel[self][resource]
+                rsi.add_request(id, req.max_requests, req.max_length)
         return rsi
 
     def apply_global_omlp_bounds(self, all_tasks, num_cpus,
@@ -64,17 +66,18 @@ class Lock(object):
         model = self.cpp_mutex_model(all_tasks, use_task_period)
         res = cpp.global_fmlp_bounds(model)
         self.apply_suspension_oblivious(all_tasks, res)
-    
+
     #port a bunch of the code in locking/bounds.py here.
 
 class ResourceRequirement(object):
     def __init__(self, res_id, num_writes=1, write_length=1,
-                 num_reads=0, read_length=0):
+                 num_reads=0, read_length=0, nest_short = False):
         self.res_id           = res_id
         self.max_writes       = num_writes
         self.max_reads        = num_reads
         self.max_write_length = write_length
         self.max_read_length  = read_length
+        self.nest_short       = nest_short
 
     @property
     def max_requests(self):
@@ -124,21 +127,21 @@ def initialize_resource_model(taskset):
         # mapping of res_id to ResourceRequirement object
         t.resmodel   = LockRequests()
 
-def apply_blocking_bounds(taskset):
-    locks = set()
-    for t in taskset:
-        for lock in t.resmodel:
-            locks.add(lock)
-
-    for lock in locks:
-        lock.apply_blocking_bounds(taskset)
-
-    # There needs to be a better way of incorporating arrival blocking bounds.
-    # Arrival blocking is not necessarily additive between locks, but instead, a
-    # job can be arrival blocked by at most m jobs, though those jobs may be
-    # accessing different locks. For example, consider a system in which there
-    # are x < m jobs that require a C-OMLP resource, and there are a y other
-    # jobs that acquire a spin-lock such that x + y > m. Then a job can be
-    # arrival blocked by the longest m requests for either of these resources.
-    # However, the way things are accounted now, we count the top x + y
-    # requests. While this is a safe approximation, it can be improved upon.
+#def apply_blocking_bounds(taskset):
+#    locks = set()
+#    for t in taskset:
+#        for lock in t.resmodel:
+#            locks.add(lock)
+#
+#    for lock in locks:
+#        lock.apply_blocking_bounds(taskset)
+#
+# There needs to be a better way of incorporating arrival blocking bounds.
+# Arrival blocking is not necessarily additive between locks, but instead, a job
+# can be arrival blocked by at most m jobs, though those jobs may be accessing
+# different locks. For example, consider a system in which there are x < m jobs
+# that require a C-OMLP resource, and there are a y other jobs that acquire a
+# spin-lock such that x + y > m. Then a job can be arrival blocked by the
+# longest m requests for either of these resources. However, the way things are
+# accounted now, we count the top x + y requests. While this is a safe
+# approximation, it can be improved upon.
