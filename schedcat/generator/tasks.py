@@ -113,7 +113,10 @@ class TaskGenerator(object):
                     cost = trunc(period * util)
                 else:
                     break
-            yield ts.SporadicTask(cost, period, deadline)
+            if cost > 0:
+                yield ts.SporadicTask(cost, period, deadline)
+            else:
+                break
 
     def make_task_set(self, *extra, **kextra):
         return ts.TaskSystem(self.tasks(*extra, **kextra))
