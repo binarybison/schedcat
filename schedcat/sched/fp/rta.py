@@ -28,7 +28,7 @@ def fp_demand(task, time):
 
 def rta_schedulable(taskset, i):
     task = taskset[i]
-    higher_prio = taskset[:i]
+    higher_prio = [t for t in taskset[:i] if t.partition == task.partition]
 
     test_end = task.deadline
 
@@ -51,11 +51,11 @@ def rta_schedulable(taskset, i):
     # if we get here, we didn't converge
     return False
 
-def bound_response_times(no_cpus, taskset):
+def bound_response_times(cpus_per_cluster, taskset):
     """Assumption: taskset is sorted in order of decreasing priority."""
-    if not (no_cpus ==  1 and taskset.only_constrained_deadlines()):
+    if not (cpus_per_cluster ==  1 and taskset.only_constrained_deadlines()):
         # This implements standard uniprocessor response-time analysis, which
-        # does not handle arbitrary deadlines or multiprocessors.
+        # does not handle arbitrary deadlines or clusters of size > 1.
         return False
     else:
         check_for_suspension_parameters(taskset)
