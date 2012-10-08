@@ -142,6 +142,9 @@ class TaskSystem(list):
         "Assumes t.wss has been initialized for each task."
         return max([t.wss for t in self])
 
-    def copy(self):
+    def __copy__(self):
         ts = TaskSystem([copy.copy(t) for t in self])
         return ts
+
+    # for backwards compatibility
+    copy = __copy__
