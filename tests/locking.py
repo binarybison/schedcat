@@ -9,6 +9,8 @@ import schedcat.locking.partition as lp
 import schedcat.model.tasks as tasks
 import schedcat.model.resources as r
 
+import schedcat.util.linprog
+
 class Locking(unittest.TestCase):
     def setUp(self):
         self.ts = tasks.TaskSystem([
@@ -111,6 +113,10 @@ class ApplyBounds(unittest.TestCase):
         lb.apply_global_omlp_bounds(self.ts, 2)
         self.sob_non_zero_blocking()
 
+    def test_omip(self):
+        lb.apply_omip_bounds(self.ts, 2, 1)
+        self.sob_non_zero_blocking()
+
     def test_clustered_omlp(self):
         lb.apply_clustered_omlp_bounds(self.ts, 2)
         self.sob_non_zero_blocking()
@@ -197,6 +203,54 @@ class Test_bounds(unittest.TestCase):
         self.assertEqual(0, res.get_arrival_blocking(3))
         self.assertEqual(7 + 7 + 77, res.get_arrival_blocking(4))
         self.assertEqual(0, res.get_arrival_blocking(5))
+
+
+    def test_arrival_blocking_msrp(self):
+        res = cpp.msrp_bounds_holistic(self.rsi1)
+        self.assertEqual(6 + 7 + 7, res.get_arrival_blocking(0))
+        self.assertEqual(5 + 7 + 7, res.get_arrival_blocking(1))
+        self.assertEqual(0, res.get_arrival_blocking(2))
+        self.assertEqual(0, res.get_arrival_blocking(3))
+        self.assertEqual(7 + 7 + 77, res.get_arrival_blocking(4))
+        self.assertEqual(0, res.get_arrival_blocking(5))
+
+    def test_local_resources_msrp(self):
+        self.rsi1.add_request(99, 100, 123456)
+        res = cpp.msrp_bounds_holistic(self.rsi1)
+        self.assertEqual(7 + 7 + 77, res.get_arrival_blocking(4))
+
+    def test_local_resources_msrp2(self):
+        self.rsi1 = cpp.ResourceSharingInfo(7)
+
+        self.rsi1.add_task(100, 100, 0, 0)
+        self.rsi1.add_request(0, 1, 77)
+
+        self.rsi1.add_task(50, 50, 0, 1)
+        self.rsi1.add_request(0, 1, 6)
+
+        self.rsi1.add_task(10, 10, 0, 2)
+        self.rsi1.add_request(0, 1, 5)
+
+        self.rsi1.add_task(10, 10, 1, 3)
+        self.rsi1.add_request(0, 1, 7)
+
+        self.rsi1.add_task(20, 20, 2, 4)
+        self.rsi1.add_request(0, 4, 1)
+
+        self.rsi1.add_task(30, 30, 2, 5)
+        self.rsi1.add_request(0, 1, 7)
+        self.rsi1.add_request(99, 1, 1)
+
+        self.rsi1.add_task(100, 100, 2, 6)
+        self.rsi1.add_request(99, 100, 123456)
+        res = cpp.msrp_bounds_holistic(self.rsi1)
+        self.assertEqual(7 + 7 + 77, res.get_arrival_blocking(4))
+        self.assertEqual(3 * 7 + 2 * 77 + 2 * 6, res.get_remote_blocking(4))
+        self.assertEqual(123456, res.get_arrival_blocking(5))
+        self.assertEqual(123456 + 7 + 77, res.get_blocking_term(5))
+        self.assertEqual(7 + 77, res.get_remote_blocking(5))
+        self.assertEqual(0, res.get_blocking_term(6))
+        self.assertEqual(0, res.get_arrival_blocking(6))
 
     def test_arrival_blocking_pf(self):
         c = 1
@@ -440,6 +494,42 @@ class Test_dpcp_terms(unittest.TestCase):
         self.assertEqual(6 + 3, res.get_remote_count(2))
         self.assertEqual(6 * 3 + 3 * 5, res.get_remote_blocking(2))
 
+    def test_priority_ceiling(self):
+        self.rsi = cpp.ResourceSharingInfo(4)
+
+        self.rsi.add_task(10, 10, 2, 100)
+        self.rsi.add_request(0, 1, 3)
+
+        self.rsi.add_task(25, 25, 3, 200)
+        self.rsi.add_request(0, 1, 5)
+
+        self.rsi.add_task(50, 50, 4, 300)
+        self.rsi.add_request(1, 1, 7)
+
+        self.rsi.add_task(100, 100, 1, 400)
+        self.rsi.add_request(1, 1, 9)
+
+        self.loc = cpp.ResourceLocality()
+        self.loc.assign_resource(0, 1)
+        self.loc.assign_resource(1, 1)
+
+        res = cpp.dpcp_bounds(self.rsi, self.loc)
+
+        self.assertEqual(1, res.get_remote_count(0))
+        self.assertEqual(5, res.get_remote_blocking(0))
+
+        self.assertEqual(4, res.get_remote_count(1))
+        self.assertEqual(4 * 3, res.get_remote_blocking(1))
+
+        self.assertEqual(6 + 3 + 1, res.get_remote_count(2))
+        self.assertEqual(6 * 3 + 3 * 5 + 1 * 9, res.get_remote_blocking(2))
+
+        self.assertEqual(0, res.get_remote_count(3))
+        self.assertEqual(0, res.get_remote_blocking(3))
+
+        self.assertEqual(11 + 5 + 3, res.get_local_count(3))
+        self.assertEqual(11 * 3 + 5 * 5 + 3 * 7, res.get_local_blocking(3))
+
 
 class Test_mpcp_terms(unittest.TestCase):
 
@@ -601,3 +691,85 @@ class Test_partition(unittest.TestCase):
         self.assertIn(self.ts[1], subsets[0])
         self.assertIn(self.ts[2], subsets[1])
         self.assertIn(self.ts[3], subsets[1])
+
+
+class Test_linprog(unittest.TestCase):
+    def setUp(self):
+        self.t1 = tasks.SporadicTask(10, 100)
+        self.t2 = tasks.SporadicTask(25, 200)
+        self.t3 = tasks.SporadicTask(33, 33)
+        self.ts = tasks.TaskSystem([self.t1, self.t2, self.t3])
+
+        self.ts.assign_ids()
+        lb.assign_fp_locking_prios(self.ts)
+
+        for t in self.ts:
+            t.response_time = t.period
+            t.partition =  t.id % 2
+
+        self.ts_no_req = self.ts.copy()
+
+        r.initialize_resource_model(self.ts)
+        r.initialize_resource_model(self.ts_no_req)
+
+        self.t1.resmodel[0].add_request(1)
+        self.t2.resmodel[0].add_request(2)
+        self.t3.resmodel[0].add_request(3)
+
+        # only one resource, assigned to the first processor
+        self.resource_locality = { 0: 0 }
+
+    def test_dpcp_cpp(self):
+        lb.apply_lp_dpcp_bounds(self.ts, self.resource_locality, use_py=False)
+
+    @unittest.skipIf(not schedcat.util.linprog.cplex_available, "no LP solver available")
+    def test_dpcp_py(self):
+        lb.apply_lp_dpcp_bounds(self.ts, self.resource_locality, use_py=True)
+
+    def test_dflp_cpp(self):
+        lb.apply_lp_dflp_bounds(self.ts, self.resource_locality, use_py=False)
+
+    @unittest.skipIf(not schedcat.util.linprog.cplex_available, "no LP solver available")
+    def test_dflp_py(self):
+        lb.apply_lp_dflp_bounds(self.ts, self.resource_locality, use_py=True)
+
+
+
+    def test_dpcp_cpp_no_req(self):
+        lb.apply_lp_dpcp_bounds(self.ts_no_req, {}, use_py=False)
+        self.assertEqual(self.ts_no_req[0].blocked, 0)
+        self.assertEqual(self.ts_no_req[0].suspended, 0)
+        self.assertEqual(self.ts_no_req[1].blocked, 0)
+        self.assertEqual(self.ts_no_req[1].suspended, 0)
+        self.assertEqual(self.ts_no_req[2].blocked, 0)
+        self.assertEqual(self.ts_no_req[2].suspended, 0)
+
+    @unittest.skipIf(not schedcat.util.linprog.cplex_available, "no LP solver available")
+    def test_dpcp_py_no_req(self):
+        lb.apply_lp_dpcp_bounds(self.ts_no_req, {}, use_py=True)
+        self.assertEqual(self.ts_no_req[0].blocked, 0)
+        self.assertEqual(self.ts_no_req[0].suspended, 0)
+        self.assertEqual(self.ts_no_req[1].blocked, 0)
+        self.assertEqual(self.ts_no_req[1].suspended, 0)
+        self.assertEqual(self.ts_no_req[2].blocked, 0)
+        self.assertEqual(self.ts_no_req[2].suspended, 0)
+
+    def test_dflp_cpp_no_req(self):
+        lb.apply_lp_dflp_bounds(self.ts_no_req, {}, use_py=False)
+        self.assertEqual(self.ts_no_req[0].blocked, 0)
+        self.assertEqual(self.ts_no_req[0].suspended, 0)
+        self.assertEqual(self.ts_no_req[1].blocked, 0)
+        self.assertEqual(self.ts_no_req[1].suspended, 0)
+        self.assertEqual(self.ts_no_req[2].blocked, 0)
+        self.assertEqual(self.ts_no_req[2].suspended, 0)
+
+    @unittest.skipIf(not schedcat.util.linprog.cplex_available, "no LP solver available")
+    def test_dflp_py_no_req(self):
+        lb.apply_lp_dflp_bounds(self.ts_no_req, {}, use_py=True)
+        self.assertEqual(self.ts_no_req[0].blocked, 0)
+        self.assertEqual(self.ts_no_req[0].suspended, 0)
+        self.assertEqual(self.ts_no_req[1].blocked, 0)
+        self.assertEqual(self.ts_no_req[1].suspended, 0)
+        self.assertEqual(self.ts_no_req[2].blocked, 0)
+        self.assertEqual(self.ts_no_req[2].suspended, 0)
+

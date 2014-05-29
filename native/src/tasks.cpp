@@ -9,8 +9,9 @@
 #include "task_io.h"
 
 void Task::init(unsigned long wcet,
-		unsigned long period,
-		unsigned long deadline)
+                unsigned long period,
+                unsigned long deadline,
+                unsigned long prio_pt)
 {
     this->wcet     = wcet;
     this->period   = period;
@@ -18,6 +19,10 @@ void Task::init(unsigned long wcet,
         this->deadline = period; // implicit
     else
         this->deadline = deadline;
+    if (!prio_pt)
+        this->prio_pt = deadline;
+    else
+        this->prio_pt = prio_pt;
 }
 
 bool Task::has_implicit_deadline() const
@@ -150,6 +155,17 @@ unsigned long TaskSet::k_for_epsilon(unsigned int idx,
     bound -= dp_ratio;
 
     return (unsigned long) ceil(std::max(0.0, bound.get_d()));
+}
+
+void TaskSet::bound_demand(const integral_t &time, integral_t &demand) const
+{
+	integral_t task_demand;
+	demand = 0;
+	for (unsigned int i = 0; i < tasks.size(); i++)
+	{
+		tasks[i].bound_demand(time, task_demand);
+		demand += task_demand;
+	}
 }
 
 void TaskSet::approx_load(fractional_t &load, const fractional_t &epsilon) const

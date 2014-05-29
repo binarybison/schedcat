@@ -15,6 +15,8 @@
 #include "edf/gedf.h"
 #include "edf/sim.h"
 
+#include "lp_analysis.h"
+
 #include "event.h"
 #include "schedule_sim.h"
 
@@ -523,8 +525,6 @@ int xxxmain(int argc, char** argv)
 
     Task t = Task(10, 100);
 
-    Job j = Job(t, 123, 12);
-
     cout << "wcet: " << t.get_wcet() << " period: " << t.get_period()
 	 << " deadline: " << t.get_deadline() << endl;
 
@@ -724,7 +724,7 @@ int main6(int argc, char** argv)
 
 int main6(int argc, char** argv)
 {
-	TaskInfo ti(100, 100, 0, 0);
+	TaskInfo ti(100, 100, 0, 0, 0);
 
 	ti.add_request(123, 3, 3);
 	ti.add_request(103, 1, 2);
@@ -908,5 +908,131 @@ int main(int argc, char** argv)
 		     << endl;
 
 	delete results;
+
+	ResourceLocality loc;
+
+	loc.assign_resource(0, 4);
+	loc.assign_resource(1, 4);
+	loc.assign_resource(2, 4);
+	loc.assign_resource(3, 4);
+
+	results = dpcp_bounds(rsi, loc);
+
+	cout << endl << endl  << "DPCP" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+	results = msrp_bounds(rsi, 5);
+
+	cout << endl << endl  << "MSRP (old)" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+
+#if defined(CONFIG_HAVE_CPLEX) || defined(CONFIG_HAVE_GLPK)
+
+	results = lp_dpcp_bounds(rsi, loc, false);
+
+	cout << endl << endl  << "DPCP(LP)" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+	results = lp_dpcp_bounds(rsi, loc, true);
+
+	cout << endl << endl  << "DPCP(LP+RTA)" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+	results = lp_dflp_bounds(rsi, loc);
+
+	cout << endl << endl  << "DFLP" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+
+	results = lp_msrp_bounds(rsi);
+
+	cout << endl << endl  << "MSRP (LP)" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+
+	results = lp_preemptive_fifo_bounds(rsi);
+
+	cout << endl << endl  << "Preemptive MSRP (LP)" << endl;
+	for (i = 0; i < results->size(); i++)
+		cout << "T" << i
+		     << " y=" << rsi.get_tasks()[i].get_priority()
+		     << " c=" << rsi.get_tasks()[i].get_cluster()
+		     << ": total=" << (*results)[i].total_length
+		     << "  remote=" << results->get_remote_blocking(i)
+		     << "  local=" << results->get_local_blocking(i)
+		     << endl;
+
+	delete results;
+
+	bool check_for_memory_leaks = true;
+
+	// Run the LP code in a loop to see if memory footprint increases
+	// significantly.
+	cout << endl << endl << "Running LP code in a loop to test for memory "
+	     << "leaks." << endl << "Press CTRL+C to exit..." << endl;
+	while (check_for_memory_leaks) {
+		results = lp_dflp_bounds(rsi, loc);
+		delete results;
+		results = lp_dpcp_bounds(rsi, loc);
+		delete results;
+	}
+
+#endif
+
 	return 0;
 }

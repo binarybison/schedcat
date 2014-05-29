@@ -85,7 +85,7 @@ class TaskSystem(list):
         for i, t in enumerate(sorted(self, key=lambda t: t.period)):
             t.id = i + 1
 
-    def assign_ids_by_period(self):
+    def assign_ids_by_deadline(self):
         for i, t in enumerate(sorted(self, key=lambda t: t.deadline)):
             t.id = i + 1
 
@@ -142,9 +142,32 @@ class TaskSystem(list):
         "Assumes t.wss has been initialized for each task."
         return max([t.wss for t in self])
 
-    def __copy__(self):
-        ts = TaskSystem([copy.copy(t) for t in self])
+    def copy(self):
+        ts = TaskSystem((copy.deepcopy(t) for t in self))
         return ts
 
     # for backwards compatibility
     copy = __copy__
+
+    def without(self, excluded_tasks):
+        "Iterate over contained tasks, skipping over excluded"
+        if isinstance(excluded_tasks, SporadicTask):
+            # special case: single argument is a task => singleton set
+            return (task for task in self if task != excluded_tasks)
+        else:
+            # general case: caller provided set of tasks to be excluded
+            return (task for task in self if not task in excluded_tasks)
+
+    def with_higher_priority_than(self, lower):
+        """Iterate over contained tasks, skipping over tasks with priority
+        lower than lower.id (i.e., over tasks with larger indices.).
+        """
+         # assumption: lower id == higher priority
+        return (task for task in self if task.id < lower.id)
+
+    def with_lower_priority_than(self, upper):
+        """Iterate over contained tasks, skipping over tasks with priority
+        higher than upper.id (i.e., over tasks with smaller indices.).
+        """
+         # assumption: lower id == higher priority
+        return (task for task in self if task.id > upper.id)

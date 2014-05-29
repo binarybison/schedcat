@@ -9,7 +9,7 @@ def charge_initial_load(oheads, taskset):
     if oheads:
         for ti in taskset:
             load = oheads.initial_cache_load(ti.wss)
-            assert load >= 0 # negative overheads make no sense    
+            assert load >= 0 # negative overheads make no sense
             ti.cost += load
             if ti.density() > 1:
                 # infeasible
@@ -18,25 +18,30 @@ def charge_initial_load(oheads, taskset):
 
 def preemption_centric_irq_costs(oheads, dedicated_irq, taskset):
     n      = len(taskset)
+    n_rel_irq = 0
     qlen   = oheads.quantum_length
     tck    = oheads.tick(n)
     ev_lat = oheads.release_latency(n)
 
     # tick interrupt
     utick = tck / qlen
-    
+
     urel  = 0.0
     if not dedicated_irq:
         rel   = oheads.release(n)
         for ti in taskset:
-            urel += (rel / ti.period)
+            if not hasattr(ti, 'early_releasing') or ti.early_releasing == False:
+                urel += (rel / ti.period)
+                n_rel_irq += 1
 
     # cost of preemption
-    cpre = tck + ev_lat * utick
+    cpre_numerator = tck + ev_lat * utick
     if not dedicated_irq:
-        cpre += n * rel + ev_lat * urel
+        cpre_numerator += n_rel_irq * rel + ev_lat * urel
 
-    return (1.0 - utick - urel, cpre)
+    uscale = 1.0 - utick - urel
+
+    return (uscale, cpre_numerator / uscale)
 
 def charge_scheduling_overheads(oheads, num_cpus, dedicated_irq, taskset):
     if not oheads:
@@ -56,7 +61,9 @@ def charge_scheduling_overheads(oheads, num_cpus, dedicated_irq, taskset):
 
     irq_latency = oheads.release_latency(n)
 
-    if dedicated_irq or num_cpus > 1:
+    if dedicated_irq:
+        unscaled = 2 * cpre + oheads.ipi_latency(n) + oheads.release(n)
+    elif num_cpus > 1:
         unscaled = 2 * cpre + oheads.ipi_latency(n)
     else:
         unscaled = 2 * cpre
@@ -64,7 +71,7 @@ def charge_scheduling_overheads(oheads, num_cpus, dedicated_irq, taskset):
     for ti in taskset:
         ti.period   -= irq_latency
         ti.deadline -= irq_latency
-        ti.cost      = (ti.cost + sched) / uscale + unscaled
+        ti.cost      = ((ti.cost + sched) / uscale) + unscaled
         if ti.density() > 1:
             return False
 
@@ -73,12 +80,12 @@ def charge_scheduling_overheads(oheads, num_cpus, dedicated_irq, taskset):
 def quantize_params(taskset):
     """After applying overheads, use this function to make
         task parameters integral again."""
-        
+
     for t in taskset:
         t.cost     = int(ceil(t.cost))
         t.period   = int(floor(t.period))
         t.deadline = int(floor(t.deadline))
-        if t.density() > 1:
+        if not min(t.period, t.deadline) or t.density() > 1:
             return False
 
     return taskset
