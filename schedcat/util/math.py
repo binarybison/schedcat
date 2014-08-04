@@ -56,6 +56,12 @@ class LinearEqu(object):
     def is_constant(self):
         return self.b == 0
 
+    def inverse(self, y):
+        if self.b == 0:
+            raise ZeroDivisionError("No inverse for constant function")
+        else:
+            return (y - self.a)/self.b
+
 class PieceWiseLinearEqu(object):
     def __init__(self, points):
         # points = [(x1, y1), (x2, y2), ...]
@@ -80,6 +86,7 @@ class PieceWiseLinearEqu(object):
         self.segments = [LinearEqu(yintercept(i), slope(i))
                          for i in xrange(len(points) - 1)]
         self.lookup = [points[i+1][0] for i in xrange(len(points) - 1)]
+        self.reverse_lookup = [points[i+1][1] for i in xrange(len(points) - 1)]
         self.hi     = len(self.lookup) - 1
 
     def __call__(self, x):
@@ -89,6 +96,11 @@ class PieceWiseLinearEqu(object):
         # approximate linearly from support point
         # negative overheads make no sense, so avoid them
         return max(0, f(x))
+
+    def inverse(self, y):
+        i = find_index(self.reverse_lookup, y, hi=self.hi)
+        f = self.segments[i]
+        return f.inverse(y)
 
     def is_constant(self):
         return all([seg[1].is_constant() for seg in self.segments])

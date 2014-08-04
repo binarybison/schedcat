@@ -138,11 +138,12 @@ class TaskSystem(list):
     def min_deadline(self):
         return min([t.deadline for t in self])
 
+    @property
     def max_wss(self):
         "Assumes t.wss has been initialized for each task."
         return max([t.wss for t in self])
 
-    def copy(self):
+    def __copy__(self):
         ts = TaskSystem((copy.deepcopy(t) for t in self))
         return ts
 
