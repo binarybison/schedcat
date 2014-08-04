@@ -9,6 +9,7 @@
 #include "edf/rta.h"
 #include "edf/ffdbf.h"
 #include "edf/load.h"
+#include "edf/la.h"
 #include "edf/gedf.h"
 
 bool GlobalEDF::is_schedulable(const TaskSet &ts,
@@ -22,6 +23,9 @@ bool GlobalEDF::is_schedulable(const TaskSet &ts,
         if (ts.get_task_count() == 0)
             return true;
     }
+
+    if (!ts.has_no_self_suspending_tasks())
+        return want_la && LAGedf(m).is_schedulable(ts, false);
 
     // density bound on a uniprocessor.
     if (m == 1)
@@ -45,6 +49,10 @@ bool GlobalEDF::is_schedulable(const TaskSet &ts,
             || (want_baruah && BaruahGedf(m).is_schedulable(ts, false))
             || (want_ffdbf && FFDBFGedf(m).is_schedulable(ts, false)))
             return true;
+
+    // LA test can handle arbitrary deadlines
+    if (want_la && LAGedf(m).is_schedulable(ts, false))
+        return true;
 
     // Load-based test can handle arbitrary deadlines.
     if (want_load && LoadGedf(m).is_schedulable(ts, false))

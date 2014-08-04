@@ -1,5 +1,37 @@
 import schedcat.locking.native as cpp
 
+# The blocking analysis needs to know which task can be preempted by which
+# other task. This of course differs under EDF and FP scheduling. To simplify
+# the interface, and to avoid having to propagate information about which
+# scheduling policy is used to the blocking analysis, we instead determine for
+# each task a *preemption level*, with the following interpretation: a task A
+# can preempt a task B if and only if A.preemption_level < B.preemption_level.
+
+def assign_edf_preemption_levels(all_tasks):
+    all_deadlines = set([t.deadline for t in all_tasks])
+    prio = {}
+    for i, dl in enumerate(sorted(all_deadlines)):
+        prio[int(dl)] = i
+
+    for t in all_tasks:
+        t.preemption_level = prio[int(t.deadline)]
+
+def assign_prio_pt_preemption_levels(all_tasks):
+    all_prio_pts = set([t.prio_pt for t in all_tasks])
+    prio = {}
+    for i, pp in enumerate(sorted(all_prio_pts)):
+        prio[int(pp)] = i
+
+    for t in all_tasks:
+        t.preemption_level = prio[int(t.prio_pt)]
+
+def assign_fp_preemption_levels(all_tasks):
+    # prioritized in index order
+    for i, t in enumerate(all_tasks):
+        t.preemption_level = i
+
+
+
 # assumes mutex constraints
 def get_cpp_model(all_tasks, use_task_period=False):
     rsi = cpp.ResourceSharingInfo(len(all_tasks))
@@ -7,12 +39,13 @@ def get_cpp_model(all_tasks, use_task_period=False):
         rsi.add_task(t.period,
                      t.period if use_task_period else t.response_time,
                      t.partition,
-                     t.id,
-                     t.cost)
+                     t.preemption_level, # mapped to fixed priorities in the C++ code
+                     t.cost,
+                     t.deadline)
         for req in t.resmodel:
             req = t.resmodel[req]
             if req.max_requests > 0:
-                rsi.add_request_rw(req.res_id, req.max_requests, req.max_length, cpp.WRITE, t.locking_prio)
+                rsi.add_request(req.res_id, req.max_requests, req.max_length, req.priority)
     return rsi
 
 def get_cpp_model_rw(all_tasks, use_task_period=False):
@@ -21,38 +54,16 @@ def get_cpp_model_rw(all_tasks, use_task_period=False):
         rsi.add_task(t.period,
                      t.period if use_task_period else t.response_time,
                      t.partition,
-                     t.id,
-                     t.cost)
+                     t.preemption_level, # mapped to fixed priorities in the C++ code
+                     t.cost,
+                     t.deadline)
         for req in t.resmodel:
             req = t.resmodel[req]
             if req.max_writes > 0:
-                rsi.add_request_rw(req.res_id, req.max_writes, req.max_write_length, cpp.WRITE, t.locking_prio)
+                rsi.add_request_rw(req.res_id, req.max_writes, req.max_write_length, cpp.WRITE, req.priority)
             if req.max_reads > 0:
-                rsi.add_request_rw(req.res_id, req.max_reads, req.max_read_length, cpp.READ, t.locking_prio)
+                rsi.add_request_rw(req.res_id, req.max_reads, req.max_read_length, cpp.READ, req.priority)
     return rsi
-
-def assign_edf_locking_prios(all_tasks):
-    all_deadlines = set([t.deadline for t in all_tasks])
-    prio = {}
-    for i, dl in enumerate(sorted(all_deadlines)):
-        prio[int(dl)] = i
-
-    for t in all_tasks:
-        t.locking_prio = prio[int(t.deadline)]
-
-def assign_prio_pt_locking_prios(all_tasks):
-    all_prio_pts = set([t.prio_pt for t in all_tasks])
-    prio = {}
-    for i, pp in enumerate(sorted(all_prio_pts)):
-        prio[int(pp)] = i
-
-    for t in all_tasks:
-        t.locking_prio = prio[int(t.prio_pt)]
-
-def assign_fp_locking_prios(all_tasks):
-    # prioritized in index order
-    for i, t in enumerate(all_tasks):
-        t.locking_prio = i
 
 # S-aware bounds
 
@@ -295,11 +306,44 @@ def apply_lp_part_fmlp_bounds(all_tasks):
 
     return res
 
+def apply_generalized_fmlp_bounds(all_tasks, cluster_size, using_edf):
+    # LP-based analysis of the generalized FMLP+
+    model = get_cpp_model(all_tasks)
+    res = lp_cpp.lp_gfmlp_bounds(model, cluster_size, using_edf)
+
+    if cluster_size == 1:
+        # partitioned scheduling: charge uniproc-analysis compatible blocking
+        for i,t in enumerate(all_tasks):
+            # remote blocking <=> self-suspension time
+            t.suspended = res.get_remote_blocking(i)
+            # all blocking, including local blocking
+            t.blocked   = res.get_blocking_term(i)
+            t.locally_blocked = res.get_local_blocking(i)
+    else:
+        # global analysis => no special treatment of local blocking
+        for i,t in enumerate(all_tasks):
+            # remote blocking <=> self-suspension time
+            t.suspended = res.get_blocking_term(i)
+            # all blocking
+            t.blocked   = res.get_blocking_term(i)
+
+    return res
+
+
 def apply_omip_bounds(all_tasks, num_cpus, procs_per_cluster):
     model = get_cpp_model(all_tasks)
     res = lp_cpp.lp_omip_bounds(model, num_cpus, procs_per_cluster)
     apply_suspension_oblivious(all_tasks, res)
     return res
+
+def apply_dummy_bounds(all_tasks):
+    model = get_cpp_model(all_tasks, True)
+    res = lp_cpp.dummy_bounds(model)
+    for i,t in enumerate(all_tasks):
+        t.blocked   = res.get_local_blocking(i)
+        t.remote_blocking = res.get_remote_blocking(i)
+    return res
+
 
 def apply_msrp_bounds(all_tasks, num_cpus):
     for t in all_tasks:
@@ -307,76 +351,74 @@ def apply_msrp_bounds(all_tasks, num_cpus):
             t.partition= num_cpus + 1
     model = get_cpp_model(all_tasks, True)
     res = cpp.msrp_bounds(model, num_cpus)
-    
+
     for i,t in enumerate(all_tasks):
         t.blocked   = res.get_local_blocking(i)
         t.cost      += res.get_remote_blocking(i)
         t.remote_blocking = res.get_remote_blocking(i)
 
-# remove!
-# def apply_msrp_bounds_holistic(all_tasks, num_cpus):
-#     model = get_cpp_model(all_tasks, True)
-#     res = cpp.msrp_bounds_holistic(model)
-#     apply_suspension_oblivious(all_tasks, res)
- 
-def apply_cpp_lp_msrp_bounds_single(all_tasks, task_index):
+def apply_pfp_lp_preemptive_fifo_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    blocking_term = lp_cpp.lp_msrp_bounds_single(model, task_index)
-    return blocking_term
-
-def apply_cpp_lp_preemptive_fifo_bounds_single(all_tasks, task_index):
-    model = get_cpp_model(all_tasks)
-    blocking_term = lp_cpp.lp_preemptive_fifo_bounds_single(model, task_index)
-    return blocking_term
-
-def apply_cpp_lp_preemptive_fifo_bounds(all_tasks):
-    model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_preemptive_fifo_bounds(model)
+    res = lp_cpp.lp_pfp_preemptive_fifo_spinlock_bounds(model)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-def apply_cpp_lp_msrp_bounds(all_tasks):
+def apply_pfp_lp_msrp_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_msrp_bounds(model)
-    return res
-    
-def apply_cpp_lp_unordered_bounds(all_tasks):
-    model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_unordered_bounds(model, False)
+    res = lp_cpp.lp_pfp_msrp_bounds(model)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-def apply_cpp_lp_preemptive_unordered_bounds(all_tasks):
+def apply_pfp_lp_unordered_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_unordered_bounds(model, True)
-    return res
-    
-def apply_cpp_lp_prio_bounds(all_tasks):
-    model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_prio_bounds(model, False)
+    res = lp_cpp.lp_pfp_unordered_spinlock_bounds(model, False)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-def apply_cpp_lp_preemptive_prio_bounds(all_tasks):
+def apply_pfp_lp_preemptive_unordered_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_prio_bounds(model, True)
+    res = lp_cpp.lp_pfp_unordered_spinlock_bounds(model, True)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-
-def apply_cpp_lp_prio_fifo_bounds(all_tasks):
+def apply_pfp_lp_prio_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_prio_fifo_bounds(model, False)
+    res = lp_cpp.lp_pfp_prio_spinlock_bounds(model, False)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-def apply_cpp_lp_preemptive_prio_fifo_bounds(all_tasks):
+def apply_pfp_lp_preemptive_prio_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_prio_fifo_bounds(model, True)
+    res = lp_cpp.lp_pfp_prio_spinlock_bounds(model, True)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-def apply_cpp_lp_baseline_bounds(all_tasks):
+def apply_pfp_lp_prio_fifo_bounds(all_tasks):
     model = get_cpp_model(all_tasks)
-    res = lp_cpp.lp_baseline_bounds(model)
+    res = lp_cpp.lp_pfp_prio_fifo_spinlock_bounds(model, False)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
     return res
 
-def apply_dummy_bounds_single(all_tasks, task_index):
-    return 0
+def apply_pfp_lp_preemptive_prio_fifo_bounds(all_tasks):
+    model = get_cpp_model(all_tasks)
+    res = lp_cpp.lp_pfp_prio_fifo_spinlock_bounds(model, True)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
+    return res
+
+def apply_pfp_lp_baseline_spinlock_bounds(all_tasks):
+    model = get_cpp_model(all_tasks)
+    res = lp_cpp.lp_pfp_baseline_spinlock_bounds(model)
+    for i, _ in enumerate(all_tasks):
+        all_tasks[i].blocked = res.get_blocking_term(i)
+    return res
 
 def apply_omip_bounds(all_tasks, num_cpus, procs_per_cluster):
     model = get_cpp_model(all_tasks)

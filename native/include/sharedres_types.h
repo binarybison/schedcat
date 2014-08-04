@@ -66,6 +66,7 @@ class TaskInfo
 private:
 	unsigned int  priority;
 	unsigned long period;
+	unsigned long deadline;
 	unsigned long response;
 	unsigned int  cluster;
 	unsigned int  id;
@@ -73,6 +74,7 @@ private:
 	Requests requests;
 
 public:
+	// implicit deadline task
 	TaskInfo(unsigned long _period,
 		 unsigned long _response,
 		 unsigned int _cluster,
@@ -81,11 +83,28 @@ public:
 		 unsigned long _cost = 0)
 		: priority(_priority),
 		  period(_period),
+		  deadline(_period),
 		  response(_response),
 		  cluster(_cluster),
 		  id(_id),
 		  cost(_cost)
+	{}
 
+	// arbitrary deadline task
+	TaskInfo(unsigned long _period,
+		 unsigned long _deadline,
+		 unsigned long _response,
+		 unsigned int _cluster,
+		 unsigned int _priority,
+		 int _id,
+		 unsigned long _cost = 0)
+		: priority(_priority),
+		  period(_period),
+		  deadline(_deadline),
+		  response(_response),
+		  cluster(_cluster),
+		  id(_id),
+		  cost(_cost)
 	{}
 
 	void add_request(unsigned int res_id,
@@ -105,6 +124,7 @@ public:
 	unsigned int get_id() const { return id; }
 	unsigned int  get_priority() const { return priority; }
 	unsigned long get_period() const { return period; }
+	unsigned long get_deadline() const { return deadline; }
 	unsigned long get_response() const { return response; }
 	unsigned int  get_cluster() const { return cluster; }
 	unsigned long get_cost() const { return cost; }
@@ -137,6 +157,47 @@ public:
 				return it->get_num_requests();
 		return 0;
 	}
+
+	unsigned int get_max_num_jobs(unsigned long interval) const;
+
+	// Assuming EDF priorities,
+	// how many jobs of this tasks with lower priority (= later deadline) than pending_job
+	// can exist while pending_job is pending?
+	unsigned int edf_get_max_lower_prio_jobs(const TaskInfo& pending_job) const
+	{
+		unsigned long interval;
+		if (pending_job.get_response() + get_deadline() <= pending_job.get_deadline())
+			// pending_job completes so quickly / has such a late deadline
+			// that any overlapping job of this task has an earlier deadline
+			// pending_job
+			return 0;
+		else
+		{
+			interval = get_deadline() + pending_job.get_response();
+			assert(interval >= pending_job.get_deadline());
+			interval -= pending_job.get_deadline();
+			return get_max_num_jobs(interval);
+		}
+	}
+
+	// Assuming fixed priorities, how many jobs of this task have lower priority
+	// than pending job? (either all nor none)
+	unsigned int fp_get_max_lower_prio_jobs(const TaskInfo& pending_job) const
+	{
+		// check relative priority
+		if (pending_job.get_priority() < get_priority())
+			return get_max_num_jobs(pending_job.get_response());
+		else
+			return 0;
+	}
+
+	unsigned int get_max_lower_prio_jobs(const TaskInfo& pending_job, bool using_edf) const
+	{
+		if (using_edf)
+			return edf_get_max_lower_prio_jobs(pending_job);
+		else
+			return fp_get_max_lower_prio_jobs(pending_job);
+	}
 };
 
 typedef std::vector<TaskInfo> TaskInfos;
@@ -162,12 +223,15 @@ public:
 		      unsigned long response,
 		      unsigned int cluster  = 0,
 		      unsigned int priority = UINT_MAX,
-                      unsigned long cost = 0)
+                      unsigned long cost = 0,
+		      unsigned long deadline = 0)
 	{
 		// Avoid re-allocation!
 		assert(tasks.size() < tasks.capacity());
 		int id = tasks.size();
-		tasks.push_back(TaskInfo(period, response, cluster, priority, id, cost));
+		if (!deadline)
+			deadline = period;
+		tasks.push_back(TaskInfo(period, deadline, response, cluster, priority, id, cost));
 	}
 
 	void add_request(unsigned int resource_id,

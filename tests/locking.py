@@ -25,28 +25,28 @@ class Locking(unittest.TestCase):
             t.response_time = t.period
             t.resmodel[1].add_request(1)
 
-    def test_fp_locking_prios(self):
+    def test_fp_preemption_levels(self):
         self.ts.sort_by_period()
-        lb.assign_fp_locking_prios(self.ts)
-        self.assertEqual(self.ts[0].locking_prio, 0)
-        self.assertEqual(self.ts[1].locking_prio, 1)
-        self.assertEqual(self.ts[2].locking_prio, 2)
-        self.assertEqual(self.ts[3].locking_prio, 3)
+        lb.assign_fp_preemption_levels(self.ts)
+        self.assertEqual(self.ts[0].preemption_level, 0)
+        self.assertEqual(self.ts[1].preemption_level, 1)
+        self.assertEqual(self.ts[2].preemption_level, 2)
+        self.assertEqual(self.ts[3].preemption_level, 3)
 
-    def test_edf_locking_prios(self):
+    def test_edf_preemption_levels(self):
         self.ts[0].deadline = 5
         self.ts[3].deadline = 9
         ts = list(self.ts)
         random.shuffle(ts)
-        lb.assign_edf_locking_prios(self.ts)
-        self.assertEqual(self.ts[0].locking_prio, 0)
-        self.assertEqual(self.ts[1].locking_prio, 0)
-        self.assertEqual(self.ts[2].locking_prio, 1)
-        self.assertEqual(self.ts[3].locking_prio, 1)
+        lb.assign_edf_preemption_levels(self.ts)
+        self.assertEqual(self.ts[0].preemption_level, 0)
+        self.assertEqual(self.ts[1].preemption_level, 0)
+        self.assertEqual(self.ts[2].preemption_level, 1)
+        self.assertEqual(self.ts[3].preemption_level, 1)
 
 
     def test_cpp_bridge(self):
-        lb.assign_fp_locking_prios(self.ts)
+        lb.assign_fp_preemption_levels(self.ts)
         self.assertIsNotNone(lb.get_cpp_model(self.ts))
         self.assertIsNotNone(lb.get_cpp_model_rw(self.ts))
 
@@ -68,7 +68,7 @@ class ApplyBounds(unittest.TestCase):
             t.response_time = t.period
             t.resmodel[0].add_request(1)
             t.resmodel[1].add_request(1)
-        lb.assign_fp_locking_prios(self.ts)
+        lb.assign_fp_preemption_levels(self.ts)
 
     def saw_non_zero_blocking(self):
         for t, t_ in zip(self.ts, self.ts_):
@@ -83,6 +83,19 @@ class ApplyBounds(unittest.TestCase):
             self.assertEqual(t.suspended, 0)
             self.assertGreater(t.cost, t_.cost)
             self.assertEqual(t.period, t_.period)
+
+    def lp_non_zero_blocking(self):
+        for t, t_ in zip(self.ts, self.ts_):
+            self.assertGreater(t.blocked, 0)
+            self.assertEqual(t.cost, t_.cost)
+            self.assertEqual(t.period, t_.period)
+
+    def lp_zero_blocking(self):
+        for t, t_ in zip(self.ts, self.ts_):
+            self.assertEqual(t.blocked, 0)
+            self.assertEqual(t.cost, t_.cost)
+            self.assertEqual(t.period, t_.period)
+
 
     def test_mpcp(self):
         lb.apply_mpcp_bounds(self.ts, use_virtual_spin=False)
@@ -101,6 +114,20 @@ class ApplyBounds(unittest.TestCase):
         lb.apply_part_fmlp_bounds(self.ts, preemptive=True)
         self.saw_non_zero_blocking()
 
+    def test_generalized_fmlp1(self):
+        lb.apply_generalized_fmlp_bounds(self.ts, 1, True)
+        self.saw_non_zero_blocking()
+
+        lb.apply_generalized_fmlp_bounds(self.ts, 1, False)
+        self.saw_non_zero_blocking()
+
+    def test_generalized_fmlp2(self):
+        lb.apply_generalized_fmlp_bounds(self.ts, 2, True)
+        self.saw_non_zero_blocking()
+
+        lb.apply_generalized_fmlp_bounds(self.ts, 2, False)
+        self.saw_non_zero_blocking()
+
     def test_part_fmlp_np(self):
         lb.apply_part_fmlp_bounds(self.ts, preemptive=False)
         self.saw_non_zero_blocking()
@@ -113,6 +140,7 @@ class ApplyBounds(unittest.TestCase):
         lb.apply_global_omlp_bounds(self.ts, 2)
         self.sob_non_zero_blocking()
 
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
     def test_omip(self):
         lb.apply_omip_bounds(self.ts, 2, 1)
         self.sob_non_zero_blocking()
@@ -165,6 +193,52 @@ class ApplyBounds(unittest.TestCase):
     def test_pfrw(self):
         lb.apply_phase_fair_rw_bounds(self.ts, 2)
         self.sob_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_preemptive_fifo_bounds(self):
+        lb.apply_pfp_lp_preemptive_fifo_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_msrp_bounds(self):
+        lb.apply_pfp_lp_msrp_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_unordered_bounds(self):
+        lb.apply_pfp_lp_unordered_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_preemptive_unordered_bounds(self):
+        lb.apply_pfp_lp_preemptive_unordered_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_prio_bounds(self):
+        lb.apply_pfp_lp_prio_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_preemptive_prio_bounds(self):
+        lb.apply_pfp_lp_preemptive_prio_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_prio_fifo_bounds(self):
+        lb.apply_pfp_lp_prio_fifo_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_pfp_lp_preemptive_prio_fifo_bounds(self):
+        lb.apply_pfp_lp_preemptive_prio_fifo_bounds(self.ts)
+        self.lp_non_zero_blocking()
+
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
+    def test_dummy_bounds(self):
+        lb.apply_dummy_bounds(self.ts)
+        self.lp_zero_blocking()
+
 
 # lower-level tests for C++ implementation
 
@@ -701,7 +775,7 @@ class Test_linprog(unittest.TestCase):
         self.ts = tasks.TaskSystem([self.t1, self.t2, self.t3])
 
         self.ts.assign_ids()
-        lb.assign_fp_locking_prios(self.ts)
+        lb.assign_fp_preemption_levels(self.ts)
 
         for t in self.ts:
             t.response_time = t.period
@@ -719,6 +793,7 @@ class Test_linprog(unittest.TestCase):
         # only one resource, assigned to the first processor
         self.resource_locality = { 0: 0 }
 
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
     def test_dpcp_cpp(self):
         lb.apply_lp_dpcp_bounds(self.ts, self.resource_locality, use_py=False)
 
@@ -726,6 +801,7 @@ class Test_linprog(unittest.TestCase):
     def test_dpcp_py(self):
         lb.apply_lp_dpcp_bounds(self.ts, self.resource_locality, use_py=True)
 
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
     def test_dflp_cpp(self):
         lb.apply_lp_dflp_bounds(self.ts, self.resource_locality, use_py=False)
 
@@ -734,7 +810,7 @@ class Test_linprog(unittest.TestCase):
         lb.apply_lp_dflp_bounds(self.ts, self.resource_locality, use_py=True)
 
 
-
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
     def test_dpcp_cpp_no_req(self):
         lb.apply_lp_dpcp_bounds(self.ts_no_req, {}, use_py=False)
         self.assertEqual(self.ts_no_req[0].blocked, 0)
@@ -754,6 +830,7 @@ class Test_linprog(unittest.TestCase):
         self.assertEqual(self.ts_no_req[2].blocked, 0)
         self.assertEqual(self.ts_no_req[2].suspended, 0)
 
+    @unittest.skipIf(not schedcat.locking.bounds.lp_cpp_available, "no native LP solver available")
     def test_dflp_cpp_no_req(self):
         lb.apply_lp_dflp_bounds(self.ts_no_req, {}, use_py=False)
         self.assertEqual(self.ts_no_req[0].blocked, 0)

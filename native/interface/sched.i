@@ -14,7 +14,7 @@
 #include "edf/gedf.h"
 #include "edf/gel_pl.h"
 #include "edf/qpa.h"
-#include "sharedres.h"
+#include "edf/la.h"
 %}
 
 %ignore Task::get_utilization(fractional_t &util) const;
@@ -22,6 +22,7 @@
 %ignore Task::bound_demand(const integral_t &time, integral_t &demand) const;
 %ignore Task::bound_load const;
 %ignore Task::approx_demand const;
+%ignore Task::dbf;
 
 %ignore TaskSet::operator[](int);
 %ignore TaskSet::operator[](int) const;
@@ -43,3 +44,4 @@
 #include "edf/gedf.h"
 #include "edf/gel_pl.h"
 #include "edf/qpa.h"
+#include "edf/la.h"

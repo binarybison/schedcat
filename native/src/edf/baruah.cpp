@@ -234,7 +234,6 @@ void BaruahGedf::get_max_test_points(const TaskSet &ts,
     {
         mc  = ts[i].get_wcet();
         mc *= m;
-        mc += 0.124;
         maxp[i] = (csigma - (ts[i].get_deadline() * m_minus_u) + tdu_sum + mc)
             / m_minus_u;
     }
@@ -249,7 +248,8 @@ bool BaruahGedf::is_schedulable(const TaskSet &ts,
 	{
         if (!(ts.has_only_feasible_tasks() &&
               ts.is_not_overutilized(m) &&
-              ts.has_only_constrained_deadlines()))
+              ts.has_only_constrained_deadlines() &&
+              ts.has_no_self_suspending_tasks()))
             return false;
 
         if (ts.get_task_count() == 0)
@@ -289,7 +289,7 @@ bool BaruahGedf::is_schedulable(const TaskSet &ts,
     AllDBFPointsOfChange *all_pts;
 
     all_pts = new AllDBFPointsOfChange[ts.get_task_count()];
-    for (unsigned int k = 0; k < ts.get_task_count() && schedulable; k++)
+    for (unsigned int k = 0; k < ts.get_task_count(); k++)
         all_pts[k].init(ts, k, max_test_point + k);
 
     // for every task for which point <= max_ak

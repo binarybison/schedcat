@@ -104,7 +104,7 @@ vpath %.cpp src src/edf src/blocking src/blocking/linprog src/linprog
 # #### Common C++ source files ####
 
 EDF_OBJ   = baker.o baruah.o gfb.o bcl.o bcl_iterative.o rta.o
-EDF_OBJ  += ffdbf.o gedf.o gel_pl.o load.o cpu_time.o qpa.o
+EDF_OBJ  += ffdbf.o gedf.o gel_pl.o load.o cpu_time.o qpa.o la.o
 SCHED_OBJ = sim.o schedule_sim.o
 CORE_OBJ  = tasks.o
 SYNC_OBJ  = sharedres.o dpcp.o mpcp.o
@@ -122,6 +122,7 @@ ifneq ($(CPLEX_PATH)$(GLPK_PATH),)
 LP_OBJ    = lp_common.o io.o lp_dflp.o lp_dpcp.o lp_mpcp.o lp_fmlp.o lp_omip.o
 LP_OBJ   += lp_spinlocks.o lp_spinlock_msrp.o lp_spinlock_unordered.o
 LP_OBJ   += lp_spinlock_prio.o lp_spinlock_prio_fifo.o
+LP_OBJ   += lp_gfmlp.o
 
 ifneq ($(CPLEX_PATH),)
 LP_OBJ   += cplex.o cpx.o
