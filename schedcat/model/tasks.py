@@ -5,6 +5,7 @@ import copy
 from math   import floor, ceil
 from schedcat.util.math    import lcm
 from schedcat.util.quantor import forall
+from collections import defaultdict
 
 from fractions import Fraction
 
@@ -138,7 +139,6 @@ class TaskSystem(list):
     def min_deadline(self):
         return min([t.deadline for t in self])
 
-    @property
     def max_wss(self):
         "Assumes t.wss has been initialized for each task."
         return max([t.wss for t in self])
@@ -172,3 +172,9 @@ class TaskSystem(list):
         """
          # assumption: lower id == higher priority
         return (task for task in self if task.id > upper.id)
+
+    def clusters(self):
+        cpus = defaultdict(list)
+        for t in ts:
+            cpus[t.partition].append(t)
+        return cpus
