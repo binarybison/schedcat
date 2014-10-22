@@ -106,7 +106,9 @@ What if two tasks both access a shared resource? Schedcat also contains blocking
 
 ## Next Steps
 
-Schedcat provides reusable components for schedulability experiments, but does not itself provide a specific schedulability experiment setup. That is, how task sets are generated and tested is left to the user since there is no single right way to do it.
+Schedcat provides many reusable components for schedulability, which are
+amenable to many different experimental design setups and processes such as how
+task sets are generated and tested.
 
 To use schedcat as a library in your schedulability experiments, 
 simply add the `schedcat` directory that is part of the repository to the `PYTHONPATH` environment variable.
@@ -118,6 +120,20 @@ For example, under `bash`, assuming that you cloned this repository to `${HOME}/
 (Note that "schedcat" occurs twice in the path, once for the repository and once for the module.)
 
 Alternatively, you can simply create a symlink from your experiment directory to the checked-out repository.
+
+## Running Large-Scale Experiments
+
+Schedcat now includes functionality to help users setup and run experiments, and scale to many processing nodes. This functionality is provided by the `schedcat.distributor` module. A working example experiment that uses the `schedcat.distributor` module can be found in the `examples` directory.
+
+*Overview:* `schedcat.distributor` implements a distributed work queue based on RPC using python's event-driven network engine [twisted](http://twistedmatrix.com). Worker-client processes can be run locally, or on a remote processor, and connect to a central server. The server manages all of the schedulability tests to run, and stores the results in a simple sqlite database.
+
+*Server:* An example schedulability-experiment server can be found in `examples/server.py`. The `ExperimentManager` will compute the cross product of all of the parameters given, e.g., the system utilization, number of processors, etc. The server script simply initializes the experiment, the `distributor` library manages dispatching the workload to the clients.
+
+*Client:* An example schedulability-experiment client can be found in `examples/client.py`. While the `distributor` library provides most of the functionality to communicate with the server, the user must provide the necessary logic to actually run the necessary schedulability tests. In particular, the `SchedulabilityClient` is initialized with a factory that produces test objects, which when run, will call the user-specified tests (which may often make heavy use of functionality provided in the core of schedcat).
+
+*Tools:* Along with the client and server libraries, which can be used to easily bootstrap an experiment, the `distributor` module includes a few helper tools. In particular, `bin/getstatus.py` can be used to query or continuously poll a server to report the status of the experiment. `bin/update_completion.py` can be used to online modify the termination conditions of the currently running experiment. This script, in addition to the fact that the `distributor` library allows experiments to be started and resumed, allows for coarse-grained experiments to be run, which can be later refined and studied in further detail. This allows a scientist to see relevant trends in experimental data quickly, without having to restart completely new experiments to see finer granularity.
+
+The `distributor` module was developed by [Bryan Ward](http://www.cs.unc.edu/~bcw/). Please direct any feedback or suggestions regarding the `distributor` module to him.
 
 ## Dependencies & Compilation
 
