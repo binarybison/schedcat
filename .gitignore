@@ -10,6 +10,7 @@ ts
 *.o
 *.os
 .coverage
+.config
 native/testmain
 native/interface/*_wrap.cc
 native/*.py
@@ -25,3 +26,4 @@ tmp/
 TAGS
 schedcat/locking/linprog/_lp_analysis.so
 schedcat/locking/linprog/native.py
+example/results.db
