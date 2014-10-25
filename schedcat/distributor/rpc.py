@@ -99,8 +99,8 @@ class Experiment(object):
             return str(val)
 
     def update(self, dp):
-        values = ",".join([self.quote(x) for x in dp.params.itervalues()] + 
-                [str(x.mean) for x in dp.data.itervalues()] +
+        values = ",".join([self.quote(dp.params[x]) for x in self.factors] +
+                [str(dp.data[x].mean) for x in self.metrics] +
                 [str(dp.samples), str(dp.elapsed)])
         query = "INSERT OR REPLACE INTO {} ({}) VALUES ({})".format(
                 self.tblname, ", ".join(self.cols), values)
