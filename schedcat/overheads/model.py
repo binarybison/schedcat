@@ -3,6 +3,46 @@ from __future__ import division
 from schedcat.util.csv import load_columns as load_column_csv
 from schedcat.util.math import monotonic_pwlin, const
 
+class GeneralOverheads(object):
+    def __init__(self, fname, ivar = "TASK-COUNT",
+                              non_decreasing = True,
+                              custom_mapping = None,
+                              per_cpu_task_counts = False,
+                              num_cpus = None):
+        self.ivar = ivar
+        self.fields = []
+        self.custom_mapping = custom_mapping
+
+        data = load_column_csv(fname, convert=float)
+
+        if not ivar in data.by_name:
+            raise IOError, "Independent variable column {} is missing".format(ivar)
+
+
+        for field in data.by_name:
+            if field != ivar:
+                self.fields.append(field)
+
+                points = zip(data.by_name[ivar], data.by_name[field])
+                if per_cpu_task_counts:
+                    points = [(num_cpus * x, y) for (x, y) in points]
+                if non_decreasing:
+                    if non_decreasing:
+                        self.__dict__[self.field_name(field)] = monotonic_pwlin(points)
+                    else:
+                        self.__dict__[self.field_name(field)] = piece_wise_linear(points)
+
+    def field_name(self, field):
+        if not self.custom_mapping or field not in self.custom_mapping:
+            return field.lower()
+        else:
+            return self.custom_mapping[field]
+    
+    def __str__(self):
+        return " ".join(["%s: %s" % (self.field_name(field),
+                                     self.__dict__[self.field_name(field)])
+                         for field in self.fields])
+
 class Overheads(object):
     """Legacy overhead objects"""
     def __init__(self):
