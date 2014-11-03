@@ -24,7 +24,7 @@ def get_status(root):
             d.addCallback(print_and_stop)
         else:
             d.addCallback(util.println)
-            reactor.callLater(1, get_status, root)
+            reactor.callLater(frequency, get_status, root)
         d.addErrback(broken)
     except:
         print "Connection to experiment server lost"
