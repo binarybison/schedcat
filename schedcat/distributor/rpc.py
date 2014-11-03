@@ -4,12 +4,13 @@ from __future__ import division
 
 import sys
 import random
-import sqlite3
 from itertools import product
 from heapq import *
+from math import ceil
 
 from twisted.spread import pb
 from twisted.internet import reactor
+from twisted.enterprise import adbapi
 
 from stats import BernoulliEstimator
 
@@ -17,10 +18,14 @@ def dict_to_key(d):
     return "".join([str(k)+str(d[k]) for k in sorted(d.keys())])
 
 class Experiment(object):
-    def __init__(self, dbfile, params, metrics, valid = lambda x: True, tblname = 'results', mode = 'c'):
-        self.dbconn = sqlite3.connect(dbfile)
-        self.db = self.dbconn.cursor()
+    def __init__(self, dbfile, params, metrics, checker,
+                 valid = lambda x: True,
+                 tblname = 'results',
+                 mode = 'c'):
+
+        self.dbpool = adbapi.ConnectionPool("sqlite3", dbfile, cp_max = 1, check_same_thread = False)
         self.tblname = tblname
+        self.checker = checker
 
         self.params = params
         self.factors = params.keys()
@@ -28,50 +33,58 @@ class Experiment(object):
         self.cols = self.factors + metrics + ["samples", "elapsed"]
         
         self.design_points = filter(valid,
-                    [DesignPoint(self, dict(zip(params.keys(),val)), metrics)
+                    [DesignPoint(self, dict(zip(params.keys(),val)), metrics, checker)
                         for val in product(*params.values())])
         self.dp_lookup = dict([(dict_to_key(dp.params), dp) for dp in self.design_points])
 
         if mode == 'n':
-            self._drop_table()
-            self._create_table()
+            self.dbpool.runInteraction(self._reset_db)
         elif mode == 'c':
-            self._create_table()
-            self._resume()
+            self.dbpool.runInteraction(self._create_or_resume)
         elif model == 'w':
-            self._resume()
+            self.dbpool.runInteraction(self._resume)
         else:
             print >> sys.stderr, "Invalid database mode"
 
-    def _resume(self):
-        for row in self.db.execute("SELECT {} FROM results".format(", ".join(self.cols))):
-            data = dict(zip(self.cols, row))
-            key = dict_to_key(dict([(k, data[k]) for k in self.factors]))
-            metrics = dict([(k, data[k]) for k in self.metrics])
-            samples = data['samples']
-            elapsed = data['elapsed']
-
-            if self.dp_lookup.has_key(key):
-                dp = self.dp_lookup[key]
-                dp.samples = samples
-                dp.elapsed = elapsed
-                for metric, stat in dp.data.iteritems():
-                    stat.mean = metrics[metric]
-                    stat.count = samples
-
-    def _drop_table(self):
-        self.db.execute("DROP TABLE IF EXISTS {}".format(self.tblname))
-
-    def _create_table(self):
+    def _reset_db(self, txn):
+        self._drop_table(txn)
+        self._create_table(txn)
+    
+    def _drop_table(self, txn):
+        txn.execute("DROP TABLE IF EXISTS {}".format(self.tblname))
+    
+    def _create_table(self, txn):
         cols_types = [("id", "INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL")]
         cols_types += [(col,self._determine_type(self.params[col])) for col in self.params.keys()]
         cols_types += [(m, "DOUBLE") for m in self.metrics]
         cols_types += [("samples", "INT"), ("elapsed", "DOUBLE")]
         cols_types = ", ".join([col + " " + typ for (col,typ) in cols_types])
-        self.db.execute("CREATE TABLE IF NOT EXISTS {} ({})".format(self.tblname, cols_types))
 
-        self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS dp ON {} ({})".format(
-            self.tblname, ", ".join(self.factors)))
+        txn.execute("CREATE TABLE IF NOT EXISTS {} ({})".format(self.tblname, cols_types))
+        txn.execute("CREATE UNIQUE INDEX IF NOT EXISTS dp ON {} ({})".format(
+                    self.tblname, ", ".join(self.factors)))
+
+    def _create_or_resume(self, txn):
+        self._create_table(txn)
+        self._resume(txn)
+
+    def _resume(self, txn):
+        for row in txn.execute("SELECT id, {} FROM results".format(", ".join(self.cols))):
+            data = dict(zip(["id"] + self.cols, row))
+            key = dict_to_key(dict([(k, data[k]) for k in self.factors]))
+            metrics = dict([(k, data[k]) for k in self.metrics])
+            samples = data['samples']
+            elapsed = data['elapsed']
+            id = data['id']
+
+            if self.dp_lookup.has_key(key):
+                dp = self.dp_lookup[key]
+                dp.id = id
+                dp.samples = samples
+                dp.elapsed = elapsed
+                for metric, stat in dp.data.iteritems():
+                    stat.mean = metrics[metric]
+                    stat.count = samples
 
     def _determine_type(self, lst):
         bytes = 0
@@ -98,20 +111,79 @@ class Experiment(object):
         else:
             return str(val)
 
-    def update(self, dp):
+    def _insert(self, txn, dp):
         values = ",".join([self.quote(dp.params[x]) for x in self.factors] +
                 [str(dp.data[x].mean) for x in self.metrics] +
                 [str(dp.samples), str(dp.elapsed)])
-        query = "INSERT OR REPLACE INTO {} ({}) VALUES ({})".format(
+        query = "INSERT INTO {} ({}) VALUES ({})".format(
                 self.tblname, ", ".join(self.cols), values)
-        self.db.execute(query)
-        self.dbconn.commit()
+        txn.execute(query)
+        txn.execute("SELECT last_insert_rowid()")
+        id = txn.fetchone()[0]
+        dp.id = id
+        return id
+
+    def _update(self, dp):
+        values = [(metric, dp.data[metric].mean) for metric in self.metrics]
+        values += [("samples", dp.samples)]
+        values += [("elapsed", dp.elapsed)]
+        valstr = ", ".join(["{} = {}".format(lhs,rhs) for lhs,rhs in values])
+        query = "UPDATE {} SET {} WHERE id = {}".format(
+                self.tblname, valstr, dp.id)
+        return self.dbpool.runQuery(query)
+
+    def save(self, dp):
+        if dp.id:
+            return self._update(dp)
+        else:
+            return self.dbpool.runInteraction(self._insert, dp)
 
     def close(self):
         self.dbconn.close()
 
+class CompletionChecker(object):
+
+    def __init__(self, min_samples, confidence, max_ci):
+        self.min_samples = min_samples
+        self.confidence = confidence
+        self.max_ci = max_ci
+        self.max_samples = self._max_samples()
+
+    # A few relevant examples:
+    # confidence: 0.95, max_ci = 0.05  => 1540
+    # confidence: 0.95, max_ci = 0.025 => 6149
+    # confidence: 0.95, max_ci = 0.01  => 38418
+    def _max_samples(self):
+        import scipy.stats
+        old = 0
+        new = self.min_samples
+        while abs(new - old) > 0.0001:
+            old = new
+            new = (scipy.stats.t.ppf((1+self.confidence)/2.0, old - 1) / self.max_ci) ** 2
+
+        return int(ceil(new))
+    
+    def complete(self, dp):
+        for metric, stat in dp.data.iteritems():
+            if stat.count < self.min_samples:
+                return False
+            elif stat.confidence_interval(self.confidence) > self.max_ci:
+                return False
+        return True
+
+    def remaining(self, dp):
+        remaining = max(s.samples_remaining(self.confidence, self.max_ci)
+                            for s in dp.data.itervalues())
+
+        return max(self.min_samples - dp.samples,
+                   min(self.max_samples - dp.samples, remaining))
+
 class DesignPoint(object):
-    def __init__(self, exp, params, metrics, elapsed = 0, samples = 0, id = None):
+
+    total_elapsed = 0
+    total_samples = 0
+
+    def __init__(self, exp, params, metrics, checker, elapsed = 0, samples = 0, id = None):
         self.exp = exp
         self.params = params
         self.data = dict([(m, BernoulliEstimator()) for m in metrics])
@@ -119,89 +191,75 @@ class DesignPoint(object):
         self.samples = samples
         self.id = id
 
+        DesignPoint.total_elapsed += elapsed
+        DesignPoint.total_samples += samples
+
     def __lt__(self, other):
         if self.samples == 0:
             return True
         elif other.samples == 0:
-            False
+            return False
         else:
-            (self.elapsed / self.samples) > (other.elapsed / other.samples)
+            return (self.elapsed / self.samples) > (other.elapsed / other.samples)
     
-    def complete(self, min_samples, max_samples, confidence, max_ci):
-        for metric, stat in self.data.iteritems():
-            if stat.count < min_samples:
-                return False
-            elif stat.count > max_samples:
-                return True
-            elif stat.confidence_interval(confidence) > max_ci:
-                return False
-        return True
-
     def update(self, trials, elapsed, results):
         self.samples += trials
+        DesignPoint.total_samples += trials
 
         self.elapsed += elapsed
+        DesignPoint.total_elapsed += elapsed
 
         for k, v in results.iteritems():
             self.data[k].add_samples(v, trials)
 
-        self.exp.update(self)
+        self.exp.save(self)
 
-    def time_remaining(self, min_samples, max_samples, confidence, interval):
+    def time_remaining(self):
         if self.samples > 0:
-            count = self.samples_remaining(min_samples,
-                                           max_samples,
-                                           confidence,
-                                           interval)
+            count = self.exp.checker.remaining(self)
             return count * (self.elapsed / self.samples)
         else:
-            # this isn't accurate, but we have no way to estimate
-            return 0
-
-    def samples_remaining(self, min_samples, max_samples, confidence, interval):
-        remaining = max(s.samples_remaining(confidence, interval) for s in self.data.itervalues())
-
-        return max(min_samples - self.samples,
-                   min(max_samples - self.samples, remaining))
+            if DesignPoint.total_samples > 0:
+                return (self.exp.checker.max_samples + self.exp.checker.min_samples)/2.0 *\
+                        (DesignPoint.total_elapsed / DesignPoint.total_samples)
+            else:
+                return 0
 
     def __getitem__(self, item):
         return self.params[item]
 
+    def __str__(self):
+        retval = ", ".join(["{}: {}".format(k,v) for k,v in self.params.iteritems()])
+        retval += "\n"
+        retval += ", ".join(["{}: {}".format(k,v.mean) for k,v in self.data.iteritems()])
+        retval += "\nSamples: {}, Elapsed: {}".format(self.samples, self.elapsed)
+        return retval
+
 class ExperimentManager(pb.Root):
     def __init__(self, experiment,
+                       checker,
                        seed = 12345,
-                       block_size = 30,
-                       min_samples = 100,
-                       max_samples = 1000,
-                       confidence = 0.95,
-                       max_ci = 0.025):
+                       min_block_time = 1):
         self.experiment = experiment
 
         random.seed(seed)
 
         self.clients = 0
-        
-        self.block_size = block_size
-        self.min_samples = min_samples
-        self.max_samples = max_samples
-        self.confidence = confidence
-        self.max_ci = max_ci
 
+        self.min_block_time = min_block_time
+        self.min_samples = checker.min_samples
+        self.checker = checker
+        
         self.work_queue = []
         # save completed so that they can be later added back to the work queue
         # if the termination conditions are changed.
         self.completed = []
 
         for dp in self.experiment.design_points:
-            if dp.complete(self.min_samples,
-                            self.max_samples,
-                            self.confidence,
-                            self.max_ci):
+            if self.checker.complete(dp):
                 self.completed.append(dp)
             else:
-                self.work_queue.append(dp)
-
-        heapify(self.work_queue)
+                heappush(self.work_queue, dp)
 
         self.outstanding = {}
     
@@ -226,11 +284,9 @@ class ExperimentManager(pb.Root):
             if dp.samples == 0:
                 trials = self.min_samples
             else:
-                remaining = dp.samples_remaining(self.min_samples,
-                                           self.max_samples,
-                                           self.confidence,
-                                           self.max_ci)
-                trials = max(remaining // 2, self.block_size)
+                remaining = self.checker.remaining(dp)
+                by_time = int((self.min_block_time * dp.samples) / dp.elapsed)
+                trials = max(remaining // 2, by_time)
             return dp.params, trials
 
         else:
@@ -242,30 +298,23 @@ class ExperimentManager(pb.Root):
 
         del(self.outstanding[dict_to_key(dp)])
 
-        if dpo.complete(self.min_samples,
-                        self.max_samples,
-                        self.confidence,
-                        self.max_ci):
+        if self.checker.complete(dpo):
             self.completed.append(dpo)
         else:
             heappush(self.work_queue, dpo)
 
     def estimate_time_remaining(self):
         if self.clients > 0:
-            return sum(dp.time_remaining(self.min_samples,
-                                         self.max_samples,
-                                         self.confidence,
-                                         self.max_ci) for dp in self.work_queue) / self.clients
+            return sum(dp.time_remaining() for dp in self.work_queue) / self.clients
         else:
-            return sum(dp.time_remaining(self.min_samples,
-                                         self.max_samples,
-                                         self.confidence,
-                                         self.max_ci) for dp in self.work_queue)
+            return sum(dp.time_remaining() for dp in self.work_queue)
 
     def remote_status(self):
         untested = sum([1 for d in self.work_queue if d.samples == 0])
-        retval  = "Remaining design points: {}\n".format(len(self.work_queue))
-        retval += "Completed design points: {}\n".format(len(self.completed))
+        retval = "Untested/Completed/Total {}/{}/{}\n".format(
+                    untested,
+                    len(self.completed),
+                    len(self.experiment.design_points))
         retval += "Estimated time remaining: {}s\n".format(self.estimate_time_remaining())
         if untested > 0:
             retval += "Estimate may be innaccurate: {} design points have not been tested at all.".format(untested)
@@ -280,15 +329,11 @@ class ExperimentManager(pb.Root):
         completed = []
 
         for dp in [d for (t, d) in self.work_queue] + self.completed:
-            if dp.complete(self.min_samples,
-                            self.max_samples,
-                            self.confidence,
-                            self.max_ci):
+            if self.checker.complete(dp):
                 completed.append(dp)
             else:
-                work_queue.append(dp)
+                heappush(work_queue, dp)
 
-        heapify(work_queue)
         self.work_queue = work_queue
         self.completed = completed
 
