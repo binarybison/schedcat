@@ -292,10 +292,9 @@ class ExperimentManager(pb.Root):
                 remaining = self.checker.remaining(dp)
                 by_time = int((self.min_block_time * dp.samples) / dp.elapsed)
                 trials = max(remaining // 2, by_time)
-            return dp.params, trials
-
+            return dp.params, trials, self.experiment.metrics
         else:
-            return None, 0
+            return None, 0, 0
 
     def remote_record_data(self, dp, trials, elapsed, results):
         dpo = self.outstanding[dict_to_key(dp)]
@@ -380,10 +379,10 @@ class SchedulabilityClient(object):
         next.addErrback(self.broken)
         self.backlog += 1
 
-    def process_design_point(self, (dp_dict, trials)):
+    def process_design_point(self, (dp_dict, trials, metrics)):
         self.backlog -= 1
         if dp_dict:
-            dp = self.DesignPointRunner(trials, **dp_dict)
+            dp = self.DesignPointRunner(trials, metrics, **dp_dict)
             elapsed, results = dp.run()
             self.count += 1
             self.manager.callRemote("record_data", dp_dict, trials, elapsed, results)
