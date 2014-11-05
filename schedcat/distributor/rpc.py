@@ -342,8 +342,8 @@ class ExperimentManager(pb.Root):
         return "Estimated time remaining: before - {}s, after - {}s".format(before, after)
 
 class SchedulabilityClient(object):
-    def __init__(self, dpfactory, server, port, local_buffer = 2):
-        self.dpfactory = dpfactory
+    def __init__(self, DesignPointRunner, server, port, local_buffer = 2):
+        self.DesignPointRunner = DesignPointRunner
 
         factory = pb.PBClientFactory()
         reactor.connectTCP(server, port, factory)
@@ -374,7 +374,7 @@ class SchedulabilityClient(object):
     def process_design_point(self, (dp_dict, trials)):
         self.backlog -= 1
         if dp_dict:
-            dp = self.dpfactory.build_design_point(trials, **dp_dict)
+            dp = self.DesignPointRunner(trials, **dp_dict)
             elapsed, results = dp.run()
             self.count += 1
             self.manager.callRemote("record_data", dp_dict, trials, elapsed, results)
