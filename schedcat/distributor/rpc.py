@@ -239,8 +239,10 @@ class ExperimentManager(pb.Root):
     def __init__(self, experiment,
                        checker,
                        seed = 12345,
-                       min_block_time = 1):
+                       min_block_time = 1,
+                       client_params = []):
         self.experiment = experiment
+        self.client_params = client_params
 
         random.seed(seed)
 
@@ -270,6 +272,9 @@ class ExperimentManager(pb.Root):
 
     def remote_client_add(self):
         self.clients += 1
+
+    def remote_request_client_params(self):
+        return self.client_params
 
     def remote_client_leave(self):
         self.clients -= 1
@@ -342,7 +347,7 @@ class ExperimentManager(pb.Root):
         return "Estimated time remaining: before - {}s, after - {}s".format(before, after)
 
 class SchedulabilityClient(object):
-    def __init__(self, DesignPointRunner, server, port, local_buffer = 2):
+    def __init__(self, DesignPointRunner, server, port, local_buffer, recv_client_params=None):
         self.DesignPointRunner = DesignPointRunner
 
         factory = pb.PBClientFactory()
@@ -355,10 +360,14 @@ class SchedulabilityClient(object):
         self.count = 0
         self.backlog = 0
         self.local_buffer = local_buffer
+        self.recv_client_params = recv_client_params
 
     def set_root(self, root):
         self.manager = root
         self.manager.callRemote("client_add")
+        if self.recv_client_params is not None:
+            client_params = self.manager.callRemote("request_client_params")
+            client_params.addCallback(self.recv_client_params)
         self.fetch_first_work()
 
     def fetch_first_work(self):
