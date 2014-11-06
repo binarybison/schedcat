@@ -28,7 +28,7 @@ def fp_demand(task, time):
 
 def rta_schedulable(taskset, i):
     task = taskset[i]
-    higher_prio = [t for t in taskset[:i] if t.partition == task.partition]
+    higher_prio = taskset[:i]
 
     test_end = task.deadline
 
