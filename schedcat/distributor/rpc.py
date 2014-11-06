@@ -294,7 +294,7 @@ class ExperimentManager(pb.Root):
 
     def remote_record_data(self, dp, trials, elapsed, results):
         dpo = self.outstanding[dict_to_key(dp)]
-        dpo.save(trials, elapsed, results)
+        dpo.update(trials, elapsed, results)
 
         del(self.outstanding[dict_to_key(dp)])
 
