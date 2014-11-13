@@ -1,6 +1,6 @@
 from __future__ import division
 
-from math import trunc, exp, log
+from math import trunc, exp, log, ceil, floor
 
 import random
 
@@ -39,6 +39,15 @@ def uniform_choice(choices):
     selector = uniform_int(0, len(choices) - 1)
     def _draw():
         return choices[selector()]
+    return _draw
+
+def geometric(p, include_zero = False):
+    if include_zero:
+        rounder = floor
+    else:
+        rounder = ceil
+    def _draw():
+        return rounder(log(1-random.random()) / log(1-p))
     return _draw
 
 def truncate(minval, maxval):
